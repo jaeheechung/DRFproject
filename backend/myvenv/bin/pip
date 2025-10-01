@@ -1,4 +1,4 @@
-#!/Users/jaeheechung/my_project/myvenv/bin/python3.11
+#!/Users/jaeheechung/my_project/backend/myvenv/bin/python3.11
 # -*- coding: utf-8 -*-
 import re
 import sys
