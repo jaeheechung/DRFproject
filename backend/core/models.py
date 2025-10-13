@@ -4,7 +4,3 @@ from django.db import models
 class Information(models.Model):
     temperature = models.FloatField()
     humidity = models.FloatField()
-    battery = models.FloatField()
-    mVbatt = models.FloatField()
-    timestamp = models.DateTimeField(auto_now_add=True)
-    
