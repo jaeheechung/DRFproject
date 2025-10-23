@@ -6,17 +6,14 @@ from .serializers import InfoSerializer
 
 # Handle POST requests to create new Information entries
 class InformationCreateView(viewsets.ModelViewSet):
-    queryset = Information.objects.all()
-    serializer_class = InfoSerializer
+    def post(self, request, *args, **kwargs):
+        serializer = InfoSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 # Handle GET requests to retrieve all Information entries
 class InformationListView(viewsets.ModelViewSet):
-    def list(self, request, *args, **kwargs):
-        print("GET request received")
-        try:
-            queryset = Information.objects.all()
-            serializer = InfoSerializer(queryset, many=True)
-            return Response(serializer.data)
-        except Exception as e:
-            print(f"Error retrieving data: {e}")
-            return Response({"error": "Error retrieving data"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    queryset = Information.objects.all()
+    serializer_class = InfoSerializer

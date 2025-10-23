@@ -8,7 +8,6 @@ function App() {
     <div className="App">
       <main>
         <GetData />
-        <PostData />
       </main>
     </div>
   );

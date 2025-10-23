@@ -1,283 +1,304 @@
-import 'chartjs-adapter-date-fns'; // Removed due to bundling issues
-import React, { useState, useEffect, useCallback } from 'react';
-import { Line } from 'react-chartjs-2';
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
-  Tooltip,
-  Legend,
-  TimeScale,
-} from 'chart.js';
-// Removed 'chartjs-adapter-date-fns' import as it causes bundling issues.
-// TimeScale is now registered, and Chart.js will handle date parsing from the timestamps.
+import React, { useState, useEffect } from 'react';
+import Chart from './Chart';
 
-// Register Chart.js components
-// We include TimeScale here to ensure the X-axis is treated as a time series.
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
-  Tooltip,
-  Legend,
-  TimeScale
-);
-
-// --- Utility Functions for Fetching Data ---
+// --- DRF API CONFIGURATION ---
+const DRF_API_URL = 'http://localhost:8000/api/information/';
 
 /**
- * Fetches sensor data from the DRF backend.
- * Uses the native Fetch API with error handling.
- * @returns {Promise<Array>} The processed array of sensor data objects.
+ * Implements exponential backoff delay before retrying a fetch request.
+ * @param {number} attempt The current retry attempt number (0-indexed).
+ * @returns {Promise<void>} A promise that resolves after the calculated delay.
  */
-const fetchSensorData = async () => {
-  // Correcting the API_URL to include the full endpoint path for information
-  const API_URL = 'http://localhost:8000/api/information/';
-  
-  try {
-    const response = await fetch(API_URL);
-    
-    // Check for HTTP errors (4xx or 5xx status codes)
-    if (!response.ok) {
-      // Try to parse error message if available
-      const errorText = await response.text();
-      throw new Error(`HTTP error! Status: ${response.status}. Response: ${errorText.substring(0, 100)}...`);
+const delay = (attempt) => {
+    const time = Math.min(1000 * Math.pow(2, attempt), 30000); // Max delay of 30s
+    return new Promise(resolve => setTimeout(resolve, time));
+};
+
+// --- REAL DRF API DATA FETCHING FUNCTION ---
+// This function fetches time-series data from your Django backend.
+const fetchSensorData = async (maxRetries = 3) => {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const response = await fetch(DRF_API_URL);
+
+      if (!response.ok) {
+        // Throw an error for non-successful HTTP status codes
+        throw new Error(`HTTP error! Status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      return data; // Return the successfully fetched data
+
+    } catch (error) {
+      if (attempt < maxRetries - 1) {
+        // Only log for visibility, but do not throw an error yet
+        console.warn(`Fetch attempt ${attempt + 1} failed. Retrying...`);
+        await delay(attempt); // Wait with exponential backoff
+      } else {
+        // Last attempt failed, throw the final error
+        throw new Error(`Failed to fetch data after ${maxRetries} attempts. Error: ${error.message}. Ensure Django server is running and CORS is configured.`);
+      }
     }
-    
-    // Parse the JSON response body
-    const data = await response.json();
-    return data;
-  } catch (error) {
-    console.error("Fetch API failed:", error);
-    // Return an empty array on failure
-    return [];
   }
 };
 
 
-// --- Main Application Component ---
+// --- CHART CONFIGURATION ---
+const createChartData = (sensorData) => {
+  // Assuming each data point object looks like:
+  // { timestamp: "HH:MM", temperature: 22.5, humidity: 65.2 }
+  const labels = sensorData.map(d => d.timestamp);
+  const temperatures = sensorData.map(d => d.temperature);
+  const humidities = sensorData.map(d => d.humidity);
 
-function App() {
-  const [data, setData] = useState(null); // Will store data formatted for Chart.js
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  // Chart.js Options for responsive and dual-axis display
-  const options = {
-    responsive: true,
-    maintainAspectRatio: false, // Allows full control of container size
-    interaction: {
-      mode: 'index',
-      intersect: false,
-    },
-    plugins: {
-      legend: {
-        position: 'top',
-        labels: {
-          usePointStyle: true,
-          padding: 20
-        }
+  return {
+    labels: labels,
+    datasets: [
+      {
+        label: 'Temperature (°C)',
+        data: temperatures,
+        borderColor: 'rgb(252, 165, 165)', // Red-300
+        backgroundColor: 'rgba(252, 165, 165, 0.5)',
+        yAxisID: 'y', // Assign to the left Y-axis
+        tension: 0.4,
+        pointRadius: 3,
+        pointHoverRadius: 5,
       },
+      {
+        label: 'Humidity (%)',
+        data: humidities,
+        borderColor: 'rgb(96, 165, 250)', // Blue-400
+        backgroundColor: 'rgba(96, 165, 250, 0.5)',
+        yAxisID: 'y1', // Assign to the right Y-axis
+        tension: 0.4,
+        pointRadius: 3,
+        pointHoverRadius: 5,
+      },
+    ],
+  };
+};
+
+// --- CHART OPTIONS (Dual Axis Setup) ---
+const chartOptions = {
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: {
+    legend: {
+      position: 'top',
+      labels: {
+        font: {
+          family: 'Inter',
+        },
+        padding: 20,
+      }
+    },
+    title: {
+      display: true,
+      text: 'Environmental Sensor Trends',
+      font: {
+        size: 18,
+        family: 'Inter',
+        weight: '600'
+      }
+    },
+    tooltip: {
+        mode: 'index',
+        intersect: false,
+        bodyFont: {
+            family: 'Inter'
+        }
+    }
+  },
+  interaction: {
+    mode: 'index',
+    intersect: false,
+  },
+  scales: {
+    x: {
       title: {
         display: true,
-        text: 'Temperature and Humidity Over Time',
-        font: { size: 18, weight: 'bold' },
-        color: '#4b5563',
+        text: 'Time',
+        font: { family: 'Inter', size: 14 }
       },
-      tooltip: {
-        callbacks: {
-          label: function(context) {
-            let label = context.dataset.label || '';
-            if (label) {
-              label += ': ';
-            }
-            if (context.parsed.y !== null) {
-              label += context.parsed.y;
-              label += context.dataset.label === 'Temperature' ? ' °C' : ' %';
-            }
-            return label;
-          },
-          title: function(context) {
-             // Use toLocaleString for a friendly, localized date/time format
-             const date = new Date(context[0].parsed.x);
-             return date.toLocaleString();
-          }
-        }
+      ticks: {
+        autoSkip: true,
+        maxTicksLimit: 12,
+        font: { family: 'Inter' }
+      },
+      grid: {
+        display: false,
       }
     },
-    scales: {
-      x: {
-        type: 'time',
-        // Note: Chart.js uses the built-in date functions without the adapter,
-        // which may limit specific date-fns functionality, but works for basic time series.
-        time: {
-          unit: 'hour', // Default unit hint
-          tooltipFormat: 'MMM d, yyyy h:mm a' // Custom format for tooltip date
-        },
-        title: {
-          display: true,
-          text: 'Time',
-          color: '#4b5563',
-        },
-        ticks: {
-          color: '#4b5563',
-        }
-      },
-      temperature: { // Left Y-Axis for Temperature
-        type: 'linear',
+    y: {
+      // Left Y-Axis for Temperature
+      type: 'linear',
+      display: true,
+      position: 'left',
+      title: {
         display: true,
-        position: 'left',
-        title: {
-          display: true,
-          text: 'Temperature (°C)',
-          color: '#ef4444',
-        },
-        ticks: {
-          color: '#ef4444',
-        }
+        text: 'Temperature (°C)',
+        font: { family: 'Inter', size: 14, weight: '600' },
+        color: 'rgb(252, 165, 165)',
       },
-      humidity: { // Right Y-Axis for Humidity
-        type: 'linear',
+      min: 10,
+      max: 35,
+      ticks: {
+        color: 'rgb(252, 165, 165)',
+        font: { family: 'Inter' }
+      }
+    },
+    y1: {
+      // Right Y-Axis for Humidity
+      type: 'linear',
+      display: true,
+      position: 'right',
+      title: {
         display: true,
-        position: 'right',
-        grid: {
-          drawOnChartArea: false, // Do not draw grid lines for the second axis
-        },
-        title: {
-          display: true,
-          text: 'Humidity (%)',
-          color: '#3b82f6',
-        },
-        min: 0,
-        max: 100,
-        ticks: {
-          color: '#3b82f6',
-        }
+        text: 'Humidity (%)',
+        font: { family: 'Inter', size: 14, weight: '600' },
+        color: 'rgb(96, 165, 250)',
+      },
+      min: 20,
+      max: 100,
+      ticks: {
+        color: 'rgb(96, 165, 250)',
+        font: { family: 'Inter' }
+      },
+      grid: {
+        drawOnChartArea: false,
       },
     },
-  };
+  },
+};
 
+const App = () => {
+  const [sensorData, setSensorData] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  // Function to process data for the chart.js format
-  const processChartData = useCallback((rawData) => {
-    // Sort raw data by timestamp to ensure the line chart draws correctly
-    const sortedData = rawData.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-
-    // Map data to the {x: time, y: value} format expected by Chart.js when using time scale
-    // Chart.js can parse the standard ISO 8601 timestamp strings directly.
-    const tempPoints = sortedData.map(item => ({
-      x: item.timestamp, 
-      y: parseFloat(item.temperature),
-    }));
-    
-    const humiPoints = sortedData.map(item => ({
-      x: item.timestamp, 
-      y: parseFloat(item.humidity),
-    }));
-
-    return {
-      datasets: [
-        {
-          label: 'Temperature',
-          data: tempPoints,
-          borderColor: 'rgb(239, 68, 68)', // Tailwind Red 500
-          backgroundColor: 'rgba(239, 68, 68, 0.5)',
-          yAxisID: 'temperature',
-          tension: 0.3,
-          pointRadius: 3,
-        },
-        {
-          label: 'Humidity',
-          data: humiPoints,
-          borderColor: 'rgb(59, 130, 246)', // Tailwind Blue 500
-          backgroundColor: 'rgba(59, 130, 246, 0.5)',
-          yAxisID: 'humidity',
-          tension: 0.3,
-          pointRadius: 3,
-        },
-      ],
-    };
-  }, []);
-
+  // Function to fetch data from the real DRF API endpoint
   useEffect(() => {
     const loadData = async () => {
-      try {
-        setLoading(true);
-        // NOTE: Correcting fetch URL to the correct API endpoint path for sensordata
-        const rawData = await fetchSensorData();
-        
-        if (rawData.length === 0) {
-            setError("The backend returned a successful response (200 OK) but no sensor data was found in the database. Please check your data records.");
-        }
-        
-        const processedData = processChartData(rawData);
-        setData(processedData);
+        setIsLoading(true);
         setError(null);
-      } catch (e) {
-        // If fetchSensorData threw an error, it's caught here
-        setError(e.message || "An unknown error occurred during data fetching.");
-      } finally {
-        setLoading(false);
-      }
+        try {
+            const data = await fetchSensorData();
+            // Data validation: ensure it's an array and has content
+            if (Array.isArray(data) && data.length > 0) {
+                setSensorData(data);
+            } else {
+                setSensorData([]);
+                setError("API returned successfully, but no data was found or the format was unexpected.");
+            }
+        } catch (err) {
+            console.error("Final Fetch Error:", err);
+            // The error message from fetchSensorData includes helpful context
+            setError(err.message);
+        } finally {
+            setIsLoading(false);
+        }
     };
-    
+
     loadData();
-  }, [processChartData]);
+  }, []); // Empty dependency array means this runs once on mount
+
+  // chartData is generated inside the Chart component now; keep createChartData for legacy use if needed
+
+  const latestReading = sensorData.length > 0 ? sensorData[sensorData.length - 1] : null;
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4 sm:p-8 font-sans antialiased">
+    <div className="min-h-screen bg-gray-50 p-4 sm:p-8 font-inter">
       <header className="text-center mb-10">
-        <h1 className="text-4xl font-extrabold text-indigo-700 mb-2">
-          Daily Sensor Data Trends
+        <h1 className="text-4xl font-extrabold text-gray-900 mb-2">
+          Environmental Data Dashboard
         </h1>
-        <p className="text-lg text-gray-500">Temperature & Humidity Visualization</p>
-        <p className="mt-4 text-xs text-gray-400">
-          Fetching from: <code className="bg-gray-200 p-1 rounded">http://localhost:8000/api/information/</code>
+        <p className="text-lg text-gray-500">
+          Visualizing data fetched from 
+          <code className="bg-gray-200 p-1 rounded font-mono text-sm">http://localhost:8000/api/information/</code>
         </p>
       </header>
 
-      <div className="max-w-6xl mx-auto bg-white p-6 sm:p-10 rounded-xl shadow-2xl border border-gray-100">
-        {loading && (
-          <div className="flex justify-center items-center h-96">
-            <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-500"></div>
-            <p className="ml-3 text-indigo-500">Loading data...</p>
+      {/* Metric Cards Section */}
+      <div className="max-w-4xl mx-auto grid grid-cols-1 sm:grid-cols-3 gap-6 mb-10">
+
+        {/* Latest Temperature */}
+        <div className="bg-white p-6 rounded-xl shadow-lg border-t-4 border-red-400 flex items-center justify-between">
+          <div>
+            <p className="text-sm font-medium text-gray-500">Current Temperature</p>
+            <p className="text-3xl font-bold text-red-600">
+              {latestReading ? `${latestReading.temperature}°C` : 'N/A'}
+            </p>
+          </div>
+        </div>
+
+        {/* Latest Humidity */}
+        <div className="bg-white p-6 rounded-xl shadow-lg border-t-4 border-blue-400 flex items-center justify-between">
+          <div>
+            <p className="text-sm font-medium text-gray-500">Current Humidity</p>
+            <p className="text-3xl font-bold text-blue-600">
+              {latestReading ? `${latestReading.humidity}%` : 'N/A'}
+            </p>
+          </div>
+        </div>
+
+        {/* Latest Timestamp */}
+        <div className="bg-white p-6 rounded-xl shadow-lg border-t-4 border-gray-400 flex items-center justify-between">
+          <div>
+            <p className="text-sm font-medium text-gray-500">Last Reading Time</p>
+            <p className="text-3xl font-bold text-gray-600">
+              {latestReading ? latestReading.timestamp : 'N/A'}
+            </p>
+          </div>
+        </div>
+
+      </div>
+
+      {/* Chart Visualization Area */}
+      <div className="max-w-4xl mx-auto bg-white p-6 rounded-xl shadow-2xl">
+        <h2 className="text-2xl font-semibold text-gray-800 mb-4 border-b pb-2">
+          Data Trends
+        </h2>
+
+        {isLoading && (
+          <div className="h-96 flex items-center justify-center text-xl text-gray-600">
+            <svg className="animate-spin -ml-1 mr-3 h-8 w-8 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            Fetching data from {DRF_API_URL}...
           </div>
         )}
 
         {error && (
-          <div className="p-4 bg-red-100 border border-red-400 text-red-700 rounded-lg" role="alert">
-            <p className="font-bold">Data Error:</p>
-            <p className="text-sm">{error}</p>
-            <p className="mt-2 text-xs">Please check the Django server console and database content.</p>
+          <div className="h-96 flex flex-col items-center justify-center bg-red-50 p-4 rounded-lg border border-red-300">
+            <p className="text-red-700 font-medium text-center">Connection Error:</p>
+            <p className="text-red-600 text-sm mt-1 max-w-lg">{error}</p>
+            <p className="text-gray-500 text-xs mt-3">
+              Ensure your Django server is running and configured with `django-cors-headers` to allow requests from the frontend origin.
+            </p>
           </div>
         )}
 
-        {/* Chart Rendering */}
-        {!loading && !error && (
-            <div className='w-full' style={{ height: 500 }}>
-              <h2 className="text-2xl font-semibold text-gray-800 mb-6">Temperature & Humidity Over Time</h2>
-              
-              {data && data.datasets.length > 0 && data.datasets[0].data.length > 0 ? (
-                  <div className='w-full h-full'>
-                    <Line data={data} options={options} />
-                  </div>
-              ) : (
-                  <p className="text-center text-gray-500 p-10">No data points available to display the chart.</p>
-              )}
+        {!isLoading && !error && sensorData.length > 0 && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="h-96">
+              <Chart data={sensorData} metric={'temperature'} height={'100%'} width={'100%'} />
+            </div>
+            <div className="h-96">
+              <Chart data={sensorData} metric={'humidity'} height={'100%'} width={'100%'} />
+            </div>
+          </div>
+        )}
+
+        {!isLoading && !error && sensorData.length === 0 && (
+            <div className="h-96 flex items-center justify-center text-xl text-gray-600">
+                Data loaded successfully, but the dataset is empty. Check your database.
             </div>
         )}
       </div>
-      
-      <footer className="mt-10 text-center text-gray-400 text-sm">
-        Data visualization powered by Chart.js and React.
-      </footer>
+
     </div>
   );
-}
+};
 
 export default App;
