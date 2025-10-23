@@ -4,4 +4,4 @@ from .models import Information
 class InfoSerializer(serializers.ModelSerializer):
     class Meta:
         model = Information
-        fields = ['temperature', 'humidity']
+        fields = ['temperature', 'humidity', 'battery', 'byteMV', 'timestamp']
